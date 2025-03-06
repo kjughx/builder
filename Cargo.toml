@@ -1,0 +1,9 @@
+[workspace.package]
+edition = "2021"
+
+[workspace]
+members = [
+    "macro",
+    "user",
+]
+resolver = "2"
