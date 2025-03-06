@@ -1,7 +1,12 @@
+#![feature(proc_macro_diagnostic)]
 use proc_macro::TokenStream;
+use proc_macro2::TokenTree;
 use quote::{quote, quote_spanned};
 use syn::{
-    self, Field, Ident, ItemStruct, Token, parse::Parse, parse_macro_input, spanned::Spanned,
+    self, Field, Ident, ItemStruct, Token,
+    parse::{Parse, Peek},
+    parse_macro_input,
+    spanned::Spanned,
 };
 
 #[derive(Default)]
@@ -9,10 +14,50 @@ struct Params {
     builder_name: Option<Ident>,
 }
 
+fn peek_and_parse<T: Peek>(input: &mut syn::parse::ParseStream, t: T) -> Result<T, syn::Error> {
+    let lookahead = input.lookahead1();
+    if !lookahead.peek(t) {
+        return Err(lookahead.error());
+    }
+
+    input.step(|cursor| {
+        let mut rest = *cursor;
+        while let Some((tt, next)) = rest.token_tree() {
+            match &tt {
+                TokenTree::Punct(punct) if punct.as_char() == '@' => {
+                    return Ok(((), next));
+                }
+                _ => rest = next,
+            }
+        }
+        Err(cursor.error("no `@` was found after this point"))
+    })?;
+
+    todo!()
+}
+
 impl Parse for Params {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let mut this = Self::default();
-        while !input.is_empty() {
+        loop {
+            let lookahead = input.lookahead1();
+            if !lookahead.peek(Ident) {
+                return Err(lookahead.error());
+            }
+
+            input.step(|cursor| {
+                let mut rest = *cursor;
+                while let Some((tt, next)) = rest.token_tree() {
+                    match &tt {
+                        TokenTree::Punct(punct) if punct.as_char() == '@' => {
+                            return Ok(((), next));
+                        }
+                        _ => rest = next,
+                    }
+                }
+                Err(cursor.error("no `@` was found after this point"))
+            })?;
+
             let ident = input.parse::<Ident>()?;
             match ident.to_string().as_str() {
                 "name" => {
@@ -21,8 +66,16 @@ impl Parse for Params {
 
                     this.builder_name = Some(Ident::new(&name, proc_macro2::Span::call_site()));
                 }
-                _ => {}
+                _ => {
+                    return Err(lookahead.error());
+                }
+            };
+
+            if input.is_empty() {
+                break;
             }
+
+            input.parse::<Token!(,)>()?;
         }
 
         Ok(this)

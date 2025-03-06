@@ -19,7 +19,7 @@ struct _Docs;
 
 #[cfg(test)]
 mod test {
-    #[builder(name = CustomBuilder)]
+    #[builder(name = CustomBuilder, a = b)]
     #[derive(Default, Debug)]
     struct MyStruct {
         a: i32,
