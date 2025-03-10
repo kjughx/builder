@@ -1,7 +1,10 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::{
-    self, Field, Ident, ItemStruct, Token, parse::Parse, parse_macro_input, spanned::Spanned,
+    self, Expr, Field, Ident, ItemStruct, Token,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    spanned::Spanned,
 };
 
 #[derive(Default)]
@@ -17,9 +20,7 @@ impl Parse for Params {
             match ident.to_string().as_str() {
                 "name" => {
                     input.parse::<Token!(=)>()?;
-                    let name = input.parse::<Ident>()?.to_string();
-
-                    this.builder_name = Some(Ident::new(&name, proc_macro2::Span::call_site()));
+                    this.builder_name = Some(input.parse::<Ident>()?);
                 }
                 _ => {}
             }
@@ -29,11 +30,68 @@ impl Parse for Params {
     }
 }
 
+#[derive(Default)]
+struct FieldParam {
+    default_value: Option<syn::Expr>,
+    hidden: bool,
+    setter: Option<Ident>,
+}
+
+impl Parse for FieldParam {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut this = Self::default();
+        loop {
+            let ident = input.parse::<Ident>()?;
+            match ident.to_string().as_str() {
+                "hidden" => {
+                    this.hidden = true;
+                }
+                "default_value" => {
+                    input.parse::<Token!(=)>()?;
+                    // TODO: Make this work with function pointers and/or closures
+                    this.default_value = Some(input.parse::<Expr>()?);
+                }
+                "setter" => {
+                    input.parse::<Token!(=)>()?;
+                    this.setter = Some(input.parse::<Ident>()?);
+                }
+                _ => {}
+            }
+            if input.is_empty() {
+                break;
+            }
+
+            input.parse::<Token!(,)>()?;
+        }
+
+        Ok(this)
+    }
+}
+
+impl FieldParam {
+    fn from_attrs(attrs: &mut Vec<syn::Attribute>) -> Option<Self> {
+        let mut i: Option<usize> = None;
+        let mut this: Option<Self> = None;
+        for (_i, attr) in attrs.iter().enumerate() {
+            if attr.path.is_ident("build") {
+                i = Some(_i);
+                this = Some(attr.parse_args::<FieldParam>().unwrap());
+                break;
+            }
+        }
+
+        if let Some(i) = i {
+            attrs.remove(i);
+        }
+
+        this
+    }
+}
+
 #[proc_macro_attribute]
 pub fn builder(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as ItemStruct);
-    let original = item.clone();
-    let name = item.ident;
+    let mut item = parse_macro_input!(item as ItemStruct);
+    let name = &item.ident;
 
     let params = parse_macro_input!(attr as Params);
     let builder_name = params.builder_name.unwrap_or(Ident::new(
@@ -41,18 +99,49 @@ pub fn builder(attr: TokenStream, item: TokenStream) -> TokenStream {
         proc_macro2::Span::call_site(),
     ));
 
-    let vis = item.vis;
+    let vis = &item.vis;
     let mut fields = vec![];
     let mut setters = vec![];
     let mut builders = vec![];
+    let mut defaults = vec![];
 
-    for Field { vis, ident, ty, .. } in item.fields {
+    for Field {
+        vis,
+        ident,
+        ty,
+        attrs,
+        ..
+    } in &mut item.fields
+    {
+        let FieldParam {
+            hidden,
+            default_value,
+            setter,
+            ..
+        } = FieldParam::from_attrs(attrs).unwrap_or_default();
+
+        defaults.push(if let Some(default) = default_value {
+            quote! {
+                #ident: #default,
+            }
+        } else {
+            quote! {
+                #ident: #ty::default(),
+            }
+        });
+
+        if hidden {
+            continue;
+        }
+
         fields.push(quote! {
             #ident: Option<#ty>,
         });
 
+        let setter = setter.as_ref().or(ident.as_ref());
+
         setters.push(quote! {
-            #vis fn #ident(self, t: #ty) -> Self {
+            #vis fn #setter(self, t: #ty) -> Self {
                 let mut this = self;
                 this.#ident = Some(t);
                 this
@@ -67,9 +156,10 @@ pub fn builder(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     TokenStream::from(quote_spanned! {
-        original.span() =>
-        #original
+        item.span() =>
+        #item
         impl #name {
+            #[allow(dead_code)]
             #vis fn builder() -> #builder_name {
                 #builder_name::new()
             }
@@ -81,14 +171,17 @@ pub fn builder(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         impl #builder_name {
-            fn new() -> Self {
+            #vis fn new() -> Self {
                 Self::default()
             }
 
             #(#setters)*
 
             fn build(self) -> #name {
-                let mut this = #name::default();
+                let mut this = #name {
+                    #(#defaults)*
+                };
+
                 #(#builders)*
 
                 this
