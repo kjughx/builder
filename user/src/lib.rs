@@ -22,7 +22,7 @@ mod test {
     }
 
     #[test]
-    fn test_custom_name() {
+    fn test_custom_builder_name() {
         #[builder(name=CustomBuilder)]
         struct MyStruct {
             a: i32,
@@ -116,17 +116,39 @@ mod test {
     }
 
     #[test]
-    fn test_custom_setter() {
+    fn test_custom_name() {
         #[builder]
         struct MyStruct {
-            #[build(setter=b)]
+            #[build(name=b)]
             a: i32,
-            #[build(setter=a)]
+            #[build(name=a)]
             b: i32,
         }
 
         let s = MyStruct::builder().b(42).a(10).build();
         assert_eq!(s.a, 42);
         assert_eq!(s.b, 10);
+    }
+
+    #[test]
+    fn test_custom_setter() {
+        #[builder]
+        struct MyStruct {
+            #[build(name=custom, custom_setter)]
+            a: i32,
+            b: i32,
+        }
+
+        impl MyStructBuilder {
+            fn custom(self, t: i32) -> Self {
+                let mut this = self;
+                this.a = Some(t);
+                this
+            }
+        }
+
+        let s = MyStruct::builder().custom(42).build();
+        assert_eq!(s.a, 42);
+        assert_eq!(s.b, 0);
     }
 }

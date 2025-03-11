@@ -34,7 +34,8 @@ impl Parse for Params {
 struct FieldParam {
     default_value: Option<syn::Expr>,
     hidden: bool,
-    setter: Option<Ident>,
+    name: Option<Ident>,
+    custom_setter: bool,
 }
 
 impl Parse for FieldParam {
@@ -48,12 +49,14 @@ impl Parse for FieldParam {
                 }
                 "default_value" => {
                     input.parse::<Token!(=)>()?;
-                    // TODO: Make this work with function pointers and/or closures
                     this.default_value = Some(input.parse::<Expr>()?);
                 }
-                "setter" => {
+                "name" => {
                     input.parse::<Token!(=)>()?;
-                    this.setter = Some(input.parse::<Ident>()?);
+                    this.name = Some(input.parse::<Ident>()?);
+                }
+                "custom_setter" => {
+                    this.custom_setter = true;
                 }
                 _ => {}
             }
@@ -116,7 +119,8 @@ pub fn builder(attr: TokenStream, item: TokenStream) -> TokenStream {
         let FieldParam {
             hidden,
             default_value,
-            setter,
+            name,
+            custom_setter,
             ..
         } = FieldParam::from_attrs(attrs).unwrap_or_default();
 
@@ -138,15 +142,17 @@ pub fn builder(attr: TokenStream, item: TokenStream) -> TokenStream {
             #ident: Option<#ty>,
         });
 
-        let setter = setter.as_ref().or(ident.as_ref());
+        if !custom_setter {
+            let setter_name = name.as_ref().or(ident.as_ref());
 
-        setters.push(quote! {
-            #vis fn #setter(self, t: #ty) -> Self {
-                let mut this = self;
-                this.#ident = Some(t);
-                this
-            }
-        });
+            setters.push(quote! {
+                #vis fn #setter_name(self, t: #ty) -> Self {
+                    let mut this = self;
+                    this.#ident = Some(t);
+                    this
+                }
+            });
+        }
 
         builders.push(quote! {
             if let Some(t) = self.#ident {
