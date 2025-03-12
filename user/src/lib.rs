@@ -57,7 +57,7 @@ mod test {
     }
 
     #[test]
-    fn test_hidden_custom_default() {
+    fn test_hidden_hidden_default() {
         #[builder]
         struct MyStruct {
             #[build(hidden, default_value = 42)]
