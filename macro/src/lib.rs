@@ -30,9 +30,14 @@ impl Parse for Params {
     }
 }
 
+enum DefaultInitializer {
+    Lazy(Expr),
+    Eager(Expr),
+}
+
 #[derive(Default)]
 struct FieldParam {
-    default_value: Option<syn::Expr>,
+    default_value: Option<DefaultInitializer>,
     hidden: bool,
     name: Option<Ident>,
     custom_setter: bool,
@@ -49,7 +54,17 @@ impl Parse for FieldParam {
                 }
                 "default_value" => {
                     input.parse::<Token!(=)>()?;
-                    this.default_value = Some(input.parse::<Expr>()?);
+                    let default = input.parse::<Expr>()?;
+
+                    this.default_value = match default {
+                        Expr::MethodCall(_) | Expr::Lit(_) | Expr::Call(_) => {
+                            Some(DefaultInitializer::Eager(default))
+                        }
+                        Expr::Path(_) | Expr::Closure(_) => Some(DefaultInitializer::Lazy(default)),
+                        _ => {
+                            return Err(input.error("invalid default initializer"));
+                        }
+                    }
                 }
                 "name" => {
                     input.parse::<Token!(=)>()?;
@@ -125,8 +140,9 @@ pub fn builder(attr: TokenStream, item: TokenStream) -> TokenStream {
         } = FieldParam::from_attrs(attrs).unwrap_or_default();
 
         defaults.push(if let Some(default) = default_value {
-            quote! {
-                #ident: #default,
+            match default {
+                DefaultInitializer::Eager(lit) => quote! {#ident: #lit,},
+                DefaultInitializer::Lazy(f) => quote! {#ident: (#f)(),},
             }
         } else {
             quote! {

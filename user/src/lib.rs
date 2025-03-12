@@ -151,4 +151,16 @@ mod test {
         assert_eq!(s.a, 42);
         assert_eq!(s.b, 0);
     }
+
+    #[test]
+    fn test_closure_default() {
+        #[builder]
+        struct MyStruct {
+            #[build(default_value = || 42)]
+            a: i32,
+        }
+
+        let s = MyStruct::builder().a(42).build();
+        assert_eq!(s.a, 42);
+    }
 }
